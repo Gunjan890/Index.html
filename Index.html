@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Hairpin Bend Manual Driving Simulation</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    body {
+      background-color: #121212;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 10px;
+    }
+    h2 {
+      color: #ffeb3b;
+      font-size: 18px;
+      margin: 4px 0;
+    }
+    p {
+      color: #bbb;
+      font-size: 12px;
+      margin: 0 0 8px 0;
+    }
+    #simCanvas {
+      background-color: #2b1810;
+      border-radius: 12px;
+      display: block;
+      margin: 0 auto;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.7);
+      max-width: 100%;
+      height: auto;
+    }
+    .controller-panel {
+      background: #1e1e1e;
+      border-radius: 12px;
+      padding: 12px;
+      max-width: 440px;
+      margin: 10px auto;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }
+    .controls-grid {
+      display: flex;
+      justify-content: space-around;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .car-box {
+      flex: 1;
+      background: #2a2a2a;
+      border-radius: 8px;
+      padding: 8px;
+    }
+    .btn-drive {
+      width: 100%;
+      padding: 12px 6px;
+      font-size: 14px;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      color: white;
+      touch-action: manipulation;
+    }
+    .btn-c1 {
+      background: #00bcd4;
+    }
+    .btn-c1:active {
+      background: #00838f;
+    }
+    .btn-c2 {
+      background: #ff9800;
+    }
+    .btn-c2:active {
+      background: #e65100;
+    }
+    input[type=range] {
+      width: 100%;
+      margin-top: 8px;
+      height: 6px;
+    }
+    .status-text {
+      font-size: 11px;
+      color: #ccc;
+      margin-top: 4px;
+    }
+    .action-row {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+    }
+    .btn-reset {
+      background: #f44336;
+      padding: 8px 24px;
+      font-weight: bold;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .legend {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 11px;
+      margin-top: 8px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>पहाड़ी U-टर्न (Hairpin Bend) ड्राइविंग सिमुलेशन</h2>
+  <p>बटन दबाकर रखें या स्लाइडर खिसकाएं</p>
+
+  <canvas id="simCanvas" width="460" height="620"></canvas>
+
+  <div class="controller-panel">
+    <div class="controls-grid">
+      <!-- Car A Control -->
+      <div class="car-box">
+        <button class="btn-drive btn-c1" id="btnDriveA">🚗 Drive Car A<br><small>(Daba kar rakhein)</small></button>
+        <input type="range" id="sliderA" min="0" max="100" value="0">
+        <div class="status-text">Car A: <span id="valA">0</span>%</div>
+      </div>
+
+      <!-- Car B Control -->
+      <div class="car-box">
+        <button class="btn-drive btn-c2" id="btnDriveB">🚗 Drive Car B<br><small>(Daba kar rakhein)</small></button>
+        <input type="range" id="sliderB" min="0" max="100" value="0">
+        <div class="status-text">Car B: <span id="valB">0</span>%</div>
+      </div>
+    </div>
+
+    <div class="action-row">
+      <button class="btn-reset" onclick="resetAll()">Reset (Shuru Se)</button>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div><span class="dot" style="background:#00e676;"></span>Green: Clear</div>
+    <div><span class="dot" style="background:#ffeb3b;"></span>1 Car on Curve: Horn</div>
+    <div><span class="dot" style="background:#ff1744;"></span>2 Cars on Curve: Red Light + Alert Horn</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("simCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const sliderA = document.getElementById("sliderA");
+    const sliderB = document.getElementById("sliderB");
+    const valAEl = document.getElementById("valA");
+    const valBEl = document.getElementById("valB");
+    const btnA = document.getElementById("btnDriveA");
+    const btnB = document.getElementById("btnDriveB");
+
+    let driveAActive = false;
+    let driveBActive = false;
+
+    const centerX = 230;
+    const centerY = 230;
+    const outerR = 175;
+    const innerR = 55;
+    const laneA_R = 135;
+    const laneB_R = 95;
+    const straightHeight = 390;
+
+    let audioCtx = null;
+    let osc = null;
+    let gainNode = null;
+    let currentSoundMode = 0; // 0 = off, 1 = 1 car horn, 2 = 2 cars danger horn
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx && audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+
+    // mode: 0 = off, 1 = single car horn (520Hz), 2 = both cars danger horn (820Hz)
+    function updateSound(mode) {
+      if (mode === 0) {
+        if (osc) {
+          try {
+            osc.stop();
+            osc.disconnect();
+          } catch (e) {}
+          osc = null;
+          gainNode = null;
+        }
+        currentSoundMode = 0;
+        return;
+      }
+
+      initAudio();
+      if (!audioCtx || audioCtx.state !== "running") return;
+
+      const targetFreq = mode === 2 ? 820 : 520;
+      const targetGain = mode === 2 ? 0.16 : 0.10;
+
+      if (!osc) {
+        osc = audioCtx.createOscillator();
+        gainNode = audioCtx.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(targetFreq, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(targetGain, audioCtx.currentTime);
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        osc.start();
+        currentSoundMode = mode;
+      } else if (currentSoundMode !== mode) {
+        osc.frequency.setValueAtTime(targetFreq, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(targetGain, audioCtx.currentTime);
+        currentSoundMode = mode;
+      }
+    }
+
+    function getCarCoords(percent, isLeftCar) {
+      const p = percent / 100;
+      let x, y, angle;
+
+      if (isLeftCar) {
+        const r = laneA_R;
+        const total = (straightHeight * 2) + (Math.PI * r);
+        const curr = p * total;
+
+        if (curr <= straightHeight) {
+          x = centerX - r;
+          y = 620 - curr;
+          angle = -Math.PI / 2;
+        } else if (curr <= straightHeight + (Math.PI * r)) {
+          const arcD = curr - straightHeight;
+          const theta = Math.PI - (arcD / r);
+          x = centerX + r * Math.cos(theta);
+          y = centerY - r * Math.sin(theta);
+          angle = -theta + Math.PI;
+        } else {
+          const rem = curr - (straightHeight + (Math.PI * r));
+          x = centerX + r;
+          y = centerY + rem;
+          angle = Math.PI / 2;
+        }
+      } else {
+        const r = laneB_R;
+        const total = (straightHeight * 2) + (Math.PI * r);
+        const curr = p * total;
+
+        if (curr <= straightHeight) {
+          x = centerX + r;
+          y = 620 - curr;
+          angle = -Math.PI / 2;
+        } else if (curr <= straightHeight + (Math.PI * r)) {
+          const arcD = curr - straightHeight;
+          const theta = arcD / r;
+          x = centerX + r * Math.cos(theta);
+          y = centerY - r * Math.sin(theta);
+          angle = -theta;
+        } else {
+          const rem = curr - (straightHeight + (Math.PI * r));
+          x = centerX - r;
+          y = centerY + rem;
+          angle = Math.PI / 2;
+        }
+      }
+      return { x, y, angle };
+    }
+
+    // state: 0 = green, 1 = single car caution (yellow/red blink), 2 = red alert
+    function drawSignalLight(x, y, state) {
+      ctx.fillStyle = "#222";
+      ctx.fillRect(x - 3, y - 10, 6, 40);
+
+      ctx.fillStyle = "#111";
+      ctx.strokeStyle = "#444";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(x - 14, y - 55, 28, 50, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      // Top Bulb (Red when 2 cars on curve; Yellow/Orange when 1 car on curve)
+      ctx.beginPath();
+      ctx.arc(x, y - 42, 8, 0, Math.PI * 2);
+      if (state === 2) {
+        ctx.fillStyle = "#ff1744";
+        ctx.shadowColor = "#ff1744";
+        ctx.shadowBlur = 16;
+      } else if (state === 1) {
+        ctx.fillStyle = "#ffab00";
+        ctx.shadowColor = "#ffab00";
+        ctx.shadowBlur = 12;
+      } else {
+        ctx.fillStyle = "#450000";
+        ctx.shadowBlur = 0;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Bottom Bulb (Green when road is clear)
+      ctx.beginPath();
+      ctx.arc(x, y - 20, 8, 0, Math.PI * 2);
+      if (state === 0) {
+        ctx.fillStyle = "#00e676";
+        ctx.shadowColor = "#00e676";
+        ctx.shadowBlur = 12;
+      } else {
+        ctx.fillStyle = "#003a15";
+        ctx.shadowBlur = 0;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#331a0e";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#4a2815";
+      ctx.beginPath();
+      ctx.moveTo(0, 0); ctx.lineTo(60, 0); ctx.lineTo(40, 240); ctx.lineTo(0, 500); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(460, 0); ctx.lineTo(400, 0); ctx.lineTo(420, 240); ctx.lineTo(460, 500); ctx.fill();
+
+      ctx.fillStyle = "#3d1f10";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, innerR, Math.PI, 0, false);
+      ctx.lineTo(centerX + innerR, 620);
+      ctx.lineTo(centerX - innerR, 620);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#1c1c1c";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, outerR, Math.PI, 0, false);
+      ctx.lineTo(centerX + outerR, 620);
+      ctx.lineTo(centerX - outerR, 620);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#3d1f10";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, innerR, Math.PI, 0, false);
+      ctx.lineTo(centerX + innerR, 620);
+      ctx.lineTo(centerX - innerR, 620);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 6;
+      ctx.setLineDash([12, 10]);
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, outerR, Math.PI, 0, false);
+      ctx.lineTo(centerX + outerR, 620);
+      ctx.moveTo(centerX - outerR, centerY);
+      ctx.lineTo(centerX - outerR, 620);
+      ctx.stroke();
+
+      ctx.strokeStyle = "#000000";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, innerR + 2, Math.PI, 0, false);
+      ctx.lineTo(centerX + innerR + 2, 620);
+      ctx.moveTo(centerX - innerR - 2, centerY);
+      ctx.lineTo(centerX - innerR - 2, 620);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([16, 14]);
+      const midR = (outerR + innerR) / 2;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, midR, Math.PI, 0, false);
+      ctx.moveTo(centerX - midR, centerY);
+      ctx.lineTo(centerX - midR, 620);
+      ctx.moveTo(centerX + midR, centerY);
+      ctx.lineTo(centerX + midR, 620);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      for (let i = 0; i < 3; i++) {
+        const bx = 78 + (i * 24), by = 550;
+        ctx.fillStyle = "#2c3e50";
+        ctx.fillRect(bx, by, 18, 30);
+        ctx.fillStyle = "#eee";
+        ctx.fillRect(bx + 2, by - 3, 4, 3);
+        ctx.fillRect(bx + 11, by - 3, 4, 3);
+        ctx.fillStyle = "#fff";
+        ctx.font = "7px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("HYW", bx + 1, by + 14);
+      }
+
+      if (driveAActive) {
+        sliderA.value = (parseFloat(sliderA.value) + 0.45) % 100;
+      }
+      if (driveBActive) {
+        sliderB.value = (parseFloat(sliderB.value) + 0.45) % 100;
+      }
+
+      const vA = parseFloat(sliderA.value);
+      const vB = parseFloat(sliderB.value);
+      valAEl.textContent = Math.round(vA);
+      valBEl.textContent = Math.round(vB);
+
+      const posA = getCarCoords(vA, true);
+      const posB = getCarCoords(vB, false);
+
+      // Car A
+      ctx.save();
+      ctx.translate(posA.x, posA.y);
+      ctx.rotate(posA.angle);
+      ctx.fillStyle = "#00bcd4";
+      ctx.fillRect(-10, -18, 20, 36);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-8, -11, 16, 6);
+      ctx.fillStyle = "#ffeb3b";
+      ctx.fillRect(-8, -19, 4, 2);
+      ctx.fillRect(4, -19, 4, 2);
+      ctx.restore();
+
+      // Car B
+      ctx.save();
+      ctx.translate(posB.x, posB.y);
+      ctx.rotate(posB.angle);
+      ctx.fillStyle = "#ff9800";
+      ctx.fillRect(-10, -18, 20, 36);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-8, -11, 16, 6);
+      ctx.fillStyle = "#ffeb3b";
+      ctx.fillRect(-8, -19, 4, 2);
+      ctx.fillRect(4, -19, 4, 2);
+      ctx.restore();
+
+      // Curve Detection (35% to 75%)
+      const carAOnCurve = (vA >= 35 && vA <= 75);
+      const carBOnCurve = (vB >= 35 && vB <= 75);
+
+      let signalState = 0;
+      if (carAOnCurve && carBOnCurve) {
+        signalState = 2; // Both cars on curve -> Red Light + High Alert Horn
+      } else if (carAOnCurve || carBOnCurve) {
+        signalState = 1; // One car on curve -> Horn + Caution Light
+      }
+
+      updateSound(signalState);
+
+      drawSignalLight(32, 260, signalState);
+      drawSignalLight(428, 260, signalState);
+
+      ctx.textAlign = "center";
+      if (signalState === 2) {
+        ctx.fillStyle = "#ff1744";
+        ctx.font = "bold 15px sans-serif";
+        ctx.fillText("🚨 RED LIGHT: DONO CARS CURVE PAR! 🚨", centerX, 35);
+      } else if (signalState === 1) {
+        ctx.fillStyle = "#ffab00";
+        ctx.font = "bold 14px sans-serif";
+        ctx.fillText("📢 HORN ACTIVE: CAR CURVE PAR HAI", centerX, 35);
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    function bindDriveEvents(btn, setActive) {
+      btn.addEventListener("mousedown", (e) => { e.preventDefault(); initAudio(); setActive(true); });
+      window.addEventListener("mouseup", () => setActive(false));
+      btn.addEventListener("touchstart", (e) => { e.preventDefault(); initAudio(); setActive(true); }, { passive: false });
+      window.addEventListener("touchend", () => setActive(false));
+    }
+
+    bindDriveEvents(btnA, (v) => driveAActive = v);
+    bindDriveEvents(btnB, (v) => driveBActive = v);
+
+    // Slider touch/drag par bhi audio enable karein
+    sliderA.addEventListener("input", initAudio);
+    sliderB.addEventListener("input", initAudio);
+
+    function resetAll() {
+      sliderA.value = 0;
+      sliderB.value = 0;
+      driveAActive = false;
+      driveBActive = false;
+      updateSound(0);
+    }
+
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
